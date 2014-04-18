@@ -7,7 +7,7 @@ class DSException(Exception):
        def __init__(self, value):
         Exception.__init__(self, value)
 
-def request_deed_list(conn, date_start, date_end):
+def request_record_list(conn, date_start, date_end):
     headers = {
         'Content-type': 'application/x-www-form-urlencoded', 
         'Accept':       'text/html',
@@ -53,75 +53,21 @@ def get_attribute(list, attribute):
             return item[1]
     return None
 
+def parse_datequery_record_list(data):
+    data_trimmed = ""
+    # Broken tags and no data in the header, so we skip it.
+    for line in data.split("\n"):
+        if len(data_trimmed) == 0:
+            if "<body " not in line:
+                continue
+            data_trimmed += "<html>\n"
+        data_trimmed += line + "\n"
+    parser = RecordDateQueryParser()
+    parser.feed(data_trimmed)
+    records = parser.get_records()
+    return records
 
-class DeedListParser(HTMLParser):
-    def __init__(self):
-        HTMLParser.__init__(self)
-        self.in_records_table = False
-        self.record = -1
-        self.column = -1
-        self.data_row = False
-        self.data = []
-
-    def handle_starttag(self, tag, attrs):
-        if tag == 'table' and get_attribute(attrs, 'class') == 'records': 
-            self.in_records_table = True
-            self.record = -1
-            self.column = -1
-        elif tag == 'tr':
-            self.record +=1
-            self.column = -1
-        elif tag =='td':
-            self.column += 1
-        elif tag=='a' and self.in_records_table and self.column == 0:
-            href = get_attribute(attrs, 'href')
-            if href is not None:
-                self.data_row = True
-                self.data.append([href])
-           
-    def handle_endtag(self, tag):
-        if tag == 'table' and self.in_records_table:
-             self.in_records_table = False
-        elif tag == 'tr':
-            self.data_row = False
-
-    def handle_data(self, data):
-        data = data.rstrip()
-        if self.data_row and self.column == 5:  # and data != ''
-            self.data[len(self.data)-1].append(data)
-
-    def get_urls(self): 
-        return [u[0] for u in self.data if u[1]]
-
-def parse_deed_list(data):
-    parser = DeedListParser()
-    parser.feed(data)
-    urls = parser.get_urls()
-    return urls
-
-def request_deed(conn, url):
-
-    logging.info('Requesting %s', url)
-    conn.request('GET', url)
-    response = conn.getresponse() 
-    logging.info('Received response to %s', url)
-
-    if response.status != 302:
-        raise Exception('request_deed - No redirect returned') 
-
-    redirect_url = response.getheader('Location')
-
-    logging.info('Requesting %s', redirect_url)
-    conn.request('GET', redirect_url)
-    response = conn.getresponse()
-    logging.info('Received response to %s', redirect_url)
-
-    if response.status != 200:
-        raise Exception('request_deed - Get request failed') 
-
-    return response.read()
-
-class DeedParser(HTMLParser):
+class RecordDateQueryParser(HTMLParser):
     def __init__(self):
         HTMLParser.__init__(self)
         self.in_records_table = False
@@ -129,10 +75,14 @@ class DeedParser(HTMLParser):
         self.column = -1
         self.data_row = False
         self.in_font = False
-        self.data = { 'Year': '', 'Document': '', 'RecordDate': '', 'Reel': '', 'Image': '', 'DocumentType': ''}
-        self.grantee = None
-        self.column_to_field = { 0: 'RecordDate', 1: 'Document', 2: 'DocType', 3: 'GrantorGrantee', 4: 'Name' }
-        self.parties = []
+        self.data = dict()
+        self.column_to_field = {
+            2: 'RecordDate',
+            3: 'Document',
+            4: 'DocType',
+            5: 'GrantorGrantee',
+            6: 'Name' }
+        self.records = dict()
 
     def handle_starttag(self, tag, attrs):
         if tag == 'table' and get_attribute(attrs, 'class') == 'records': 
@@ -149,26 +99,37 @@ class DeedParser(HTMLParser):
            
     def handle_endtag(self, tag):
         if tag == 'table' and self.in_records_table:
-             self.in_records_table = False
+            self.in_records_table = False
         elif tag == 'tr':
             self.data_row = False
         elif tag == 'font':
             self.in_font = False
 
-    def handle_data(self, data):
+    def handle_data(self, celldata):
         if self.in_records_table and self.in_font:
-           print self.column, data
+           print self.column, celldata
+           # We process the last record when we return to column 0
+           if self.column == 0:
+               if 'Document' in self.data.keys():
+                   for k in self.data.keys():
+                       # Sometimes there are multiple cells in a row/col
+                       # not sure of a better way to treat this
+                       self.data[k] = "\n".join(self.data[k])
+                   docid = self.data['Document']
+                   if docid in self.records.keys():
+                       self.records[docid].append(self.data)
+                   else:
+                       self.records[docid] = [self.data]
+               self.data = dict()
            if self.column in self.column_to_field:
-                self.data[self.column_to_field[self.column]] = data
-           elif self.column == 10:
-                self.grantee = data
-           elif self.column == 13 or self.column == 14:
-                self.parties.append((self.grantee, data)) 
+               fieldname = self.column_to_field[self.column]
+               if fieldname in self.data.keys():
+                   self.data[fieldname].append(celldata)
+               else:
+                   self.data[fieldname] = [celldata]
 
-def parse_deed(data):
-    parser = DeedParser()
-    parser.feed(data)
-    return (parser.data, parser.parties)
+    def get_records(self):
+        return self.records
 
 def write_data(file_obj, block, lot, data, parties):
     writer = csv.writer(file_obj, quoting=csv.QUOTE_ALL)

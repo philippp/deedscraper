@@ -2,6 +2,7 @@
 import csv
 from datetime import datetime 
 import httplib, urllib
+import pprint
 import sys
 import time
 import deedScraperLib as ds
@@ -58,39 +59,23 @@ def create_connection():
 
 def main(argv):
     logging.basicConfig(level=logging.INFO)
-
-    (date_start, date_end, throttle)   = parse_commandline_arguments(argv)
+    (date_start, date_end, throttle) = parse_commandline_arguments(argv)
     print 'Throttle between requests ', throttle, 'ms'
     
     conn = create_connection()
     time_out_errors = 0
     start = datetime.now()
     output_file = open(output_file_name, 'w')
-
+    obtained_records = False
     for retry in range(0, 3):
-
         # Throttle to ensure we do not overload website
         time.sleep(throttle / 1000.0)
-
         try:
-            document = ds.request_deed_list(conn, date_start, date_end)
-            print document
-            urls = ds.parse_deed_list(document)
-
-            if len(urls) == 0:
-                raise ds.DSException('Failed to find deeds')
-                                        
-            for url in urls:
-                deed = ds.request_deed(conn, url)
-                data, parties = ds.parse_deed(deed)
-
-                if len(parties) == 0:
-                    raise ds.DSException(str.format('Failed to find parties for deed {}', url))
-
-                print 'Writing data for range'
-                ds.write_data(output_file, block, lot, data, parties)
-                obtained_deeds = True
-                break
+            document = ds.request_record_list(conn, date_start, date_end)
+            records = ds.parse_datequery_record_list(document)
+            pprint.pprint(records)
+            obtained_records = True
+            break
 
         except socket.timeout, e:
             conn.close()
@@ -99,7 +84,7 @@ def main(argv):
             logging.info(traceback.format_exc())
             logging.error('retrying...')
 
-        if not obtained_deeds:
+        if not obtained_records:
             time_out_errors += 1
             if time_out_errors < 10:
                 raise ds.DSException('Timeout after 3 attempts')
