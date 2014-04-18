@@ -7,19 +7,23 @@ class DSException(Exception):
        def __init__(self, value):
         Exception.__init__(self, value)
 
-def request_deed_list(conn, block, lot):
+def request_deed_list(conn, date_start, date_end):
     headers = {
         'Content-type': 'application/x-www-form-urlencoded', 
         'Accept':       'text/html',
         'User-Agent':   'sararcher@outlook.com'
     }
     params = urllib.urlencode({
-        'BLOCK':        block, 
-        'LOT':          lot,
-        'SEARCH_TYPE':  'APN',
+        'DOC_TYPE': '001',
+        'doc_dateA': date_start,
+        'doc_dateB': date_end,
+        'SEARCH_TYPE': 'DOCTYPE',
         'COUNTY':       'sanfrancisco',
         'YEARSEGMENT':  'current',
-        'ORDER_TYPE':   'Recorded+Official'
+        'ORDER_TYPE':   'Recorded Official',
+        'LAST_RECORD': '1',
+        'SCREENRETURN': 'doc_search.cgi',
+        'SCREEN_RETURN_NAME': 'Recorded Document Search',
     })
     
     logging.info('Requesting /cgi-bin/new_get_recorded.cgi %s %s', str(params), str(headers))
@@ -87,7 +91,7 @@ class DeedListParser(HTMLParser):
             self.data[len(self.data)-1].append(data)
 
     def get_urls(self): 
-        return [u[0] for u in self.data if u[1] == 'DEED']
+        return [u[0] for u in self.data if u[1]]
 
 def parse_deed_list(data):
     parser = DeedListParser()
@@ -127,7 +131,7 @@ class DeedParser(HTMLParser):
         self.in_font = False
         self.data = { 'Year': '', 'Document': '', 'RecordDate': '', 'Reel': '', 'Image': '', 'DocumentType': ''}
         self.grantee = None
-        self.column_to_field = { 0: 'Year', 1: 'Document', 2: 'RecordDate', 3: 'Reel', 4: 'Image', 6: 'DocumentType' }
+        self.column_to_field = { 0: 'RecordDate', 1: 'Document', 2: 'DocType', 3: 'GrantorGrantee', 4: 'Name' }
         self.parties = []
 
     def handle_starttag(self, tag, attrs):
@@ -153,11 +157,12 @@ class DeedParser(HTMLParser):
 
     def handle_data(self, data):
         if self.in_records_table and self.in_font:
-            if self.column in self.column_to_field:
+           print self.column, data
+           if self.column in self.column_to_field:
                 self.data[self.column_to_field[self.column]] = data
-            elif self.column == 10:
+           elif self.column == 10:
                 self.grantee = data
-            elif self.column == 13 or self.column == 14:
+           elif self.column == 13 or self.column == 14:
                 self.parties.append((self.grantee, data)) 
 
 def parse_deed(data):
