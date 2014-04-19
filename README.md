@@ -3,39 +3,23 @@ Deedscraper
 
 Pulls details of property deeds for the sale of properties in the San Francisco city+county area from www.criis.com
 
+Invocation ./deedScraper.py YYYYMMDD:YYYYMMDD output_path
 
-Input file
-----------
-
-CSV file containing two columns
-
-    * Block number
-    * Lot number
+The first argument specifies the start and end days of our query, which are inclusive and may be the same date for a single day query. We store records (see "record format" section below) encoded as JSON lists in the directory specified by output_path. Storing each day in its own file should make it easier to resume fetching upon failure.
 
 
-Output file - deed_scraper.out
-------------------------------
+Records
+-------
 
-CSV file containing the following columns:
+Records contain the following fields:
 
-    * Block number
-    * Lot number
-    * Year
-    * Record Date
-    * Reel
-    * Image
-    * Document Type
-    * Grantor/Grantee
-    * Party
-
-Output file - deed_scraper.err
-------------------------------
-
-CSV file with details of any block/lot numbers for which deeds could not be obtained
-
-    * Block number
-    * Lot number
-    * Reason
+    * id (string): Record Document ID
+    * date (string): Date of filing
+    * reel_image (string): Reel and image of original document
+    * doctype (string): Document type (Currently just DEED)
+    * apn (list of strings): Block and Lot numbers of the record
+    * grantors (list of strings): Grantors of the deed
+    * grantees (list of strings): Grantees (recipients) of the deed
 
 Warning
 -------

@@ -5,6 +5,7 @@ import logging
 import pprint
 import time
 import socket
+import traceback
 
 SLEEP_THROTTLE = 200  # ms to sleep between requests
 MULTILINE_WORKAROUND_KEY = "|||"
@@ -25,16 +26,20 @@ def fetch_records_for_daterange(start_date, end_date):
 
     normalized_records = []
 
-    debug_run_limit = 5
     run_cnt = 0
     # The date query returnes several rows for each record, and each
     # row can have several entries for each key.
     for joinkey, record_rows in denorm_records.iteritems():
-        if run_cnt > debug_run_limit:
-            return normalized_records
         run_cnt += 1
         if len(record_rows) == 0:
             logging.warning("No record rows for joinkey %s", joinkey)
+            continue
+        record_rows_zero_keys = record_rows[0].keys()
+        if "RecordDate" not in record_rows_zero_keys or \
+                "DocType" not in record_rows_zero_keys or \
+                "APNLink" not in record_rows_zero_keys:
+            logging.warning("Encountered a bad row with keys: %s" % (
+                    ",".join(record_rows_zero_keys)))
             continue
         normalized_record = dict()
         normalized_record['id'] = joinkey
@@ -49,6 +54,8 @@ def fetch_records_for_daterange(start_date, end_date):
 
         # Fetch the grantors and grantees
         for row in record_rows:
+            if not row.get('Name'):
+                continue
             names = row['Name'].split(MULTILINE_WORKAROUND_KEY)
             if row.get('GrantorGrantee','') == 'E':
                 normalized_record['grantees'] += names
@@ -60,7 +67,19 @@ def fetch_records_for_daterange(start_date, end_date):
         # Fetch the APNs.
         apn_url = record_rows[0]['APNLink']
         logging.info("Looking up APNs for %s via URL %s", joinkey, apn_url)
-        apn_list_html = apn_query_caller.fetch(apn_url)
+        apn_fetch_retries = 0
+        apn_fetch_max_retries = 3
+        while apn_fetch_retries < apn_fetch_max_retries:
+            try:
+                apn_list_html = apn_query_caller.fetch(apn_url)
+                break
+            except DSException:
+                logging.error("Caught a DSException trying to fetch %s." % (
+                        apn_url))
+                apn_query_caller.close_connection()
+                time.sleep(5)
+                apn_query_caller.open_connection()
+
         apn_query_parser.feed(apn_list_html)
         denorm_apn_records = apn_query_parser.get_records()
         reel_image = list()
@@ -127,28 +146,42 @@ class CRIISCaller(object):
     def close_connection(self):
         if (self.conn != None):
             self.conn.close()
-        
+        self.conn = None
+
     """ Returns string contents of the page. """
     def call_criis_with_redirection(self, url, params, headers=None):
         if not headers:
             headers = self.default_headers
         logging.info('Requesting %s %s %s', url, params, headers)
         self.call_http_with_retries('POST', url, params, headers)
-        response = self.conn.getresponse()
-        logging.info("Received response to %s", url)
-
+        response = self.get_response_with_retries()
         if response.status != 302:
             raise DSException('No redirect returned.') 
 
         redirect_url = response.getheader('Location')
-        logging.info('Requesting %s', redirect_url)
         self.call_http_with_retries('GET', redirect_url)
-        response = self.conn.getresponse()
-        logging.info('Received response to %s', redirect_url)
-
+        response = self.get_response_with_retries()
         if response.status != 200:
             raise DSException('Post-redirect page fetching failed.') 
         return response.read()
+
+    # TODO: Refactor to avoid duplicating sleep logic and constants.
+    def get_response_with_retries(self):
+        sleep_per_retry_ms = 2000
+        max_retries = 5
+        for retry in range(0, max_retries):
+            try:
+                return self.conn.getresponse()
+            except socket.timeout, e:
+                logging.error('Timeout #%d: %s', retry+1, str(e))
+                logging.info(traceback.format_exc())
+                sleep_sec = sleep_per_retry_ms / 1000.0
+                logging.error("Retrying in %2.2f seconds" % sleep_sec)
+                time.sleep(sleep_sec)
+
+        raise DSException(
+            "Failed to getresponse after %d attempts. Bailing." % max_retries)
+                
 
     def call_http_with_retries(self, req_type, url, params=None, headers=None):
         if not params:
@@ -168,10 +201,10 @@ class CRIISCaller(object):
                 logging.info(traceback.format_exc())
                 sleep_sec = (retry + 1) * additional_sleep_per_retry_ms / 1000.0
                 logging.error("Retrying in %2.2f seconds")
-                time.sleep((retry + 1) * additional_sleep_per_retry_ms)
+                time.sleep(sleep_sec)
                 self.create_connection()
-        logging.error("Failed to call %s after %d attempts. Bailing.",
-                      url, max_retries)
+        raise DSException(
+            "Failed to call %s after %d attempts. Bailing." % (url,max_retries))
 
 """ Issues a date-range query to CRIIS. """
 class CRIISCallerDateQuery(CRIISCaller):
@@ -265,7 +298,7 @@ class HTMLRecordsParser(HTMLParser):
             
     """Called with data in HTML tags. Populates the records dict with
     a list of extracted rows for every joinkey (Document ID) encountered.
-    It's assumed that every field can have multiple entries (ex: grantees,
+    It is assumed that every field can have multiple entries (ex: grantees,
     APNs). """
     def handle_data(self, celldata):
         if self.in_records_table and self.in_font:
