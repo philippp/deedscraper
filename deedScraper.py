@@ -63,6 +63,7 @@ def main(argv):
     print 'Throttle between requests ', throttle, 'ms'
     
     conn = create_connection()
+    date_query_caller = ds.CRIISCallerDateQuery(conn)
     time_out_errors = 0
     start = datetime.now()
     output_file = open(output_file_name, 'w')
@@ -71,7 +72,7 @@ def main(argv):
         # Throttle to ensure we do not overload website
         time.sleep(throttle / 1000.0)
         try:
-            document = ds.request_record_list(conn, date_start, date_end)
+            document = date_query_caller.fetch(date_start, date_end)
             records = ds.parse_datequery_record_list(document)
             pprint.pprint(records)
             obtained_records = True
