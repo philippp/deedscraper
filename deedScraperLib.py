@@ -2,9 +2,94 @@ import httplib, urllib
 import csv
 from HTMLParser import HTMLParser
 import logging
+import pprint
+import time
+import socket
+
+SLEEP_THROTTLE = 200  # ms to sleep between requests
+MULTILINE_WORKAROUND_KEY = "|||"
+
+""" Fetch records for date range, including owner and APN information.
+Returns a date-sorted list of normalized records.
+"""
+def fetch_records_for_daterange(start_date, end_date):
+    date_query_caller = CRIISCallerDateQuery()
+    date_query_parser = HTMLRecordsDateQueryParser()
+
+    apn_query_caller = CRIISCallerAPNQuery()
+    apn_query_parser = HTMLRecordsAPNParser()
+
+    html_daterecords = date_query_caller.fetch(start_date, end_date)
+    date_query_parser.feed(html_daterecords)
+    denorm_records = date_query_parser.get_records()
+
+    normalized_records = []
+
+    debug_run_limit = 5
+    run_cnt = 0
+    # The date query returnes several rows for each record, and each
+    # row can have several entries for each key.
+    for joinkey, record_rows in denorm_records.iteritems():
+        if run_cnt > debug_run_limit:
+            return normalized_records
+        run_cnt += 1
+        if len(record_rows) == 0:
+            logging.warning("No record rows for joinkey %s", joinkey)
+            continue
+        normalized_record = dict()
+        normalized_record['id'] = joinkey
+        normalized_record['date'] = record_rows[0]['RecordDate']
+        normalized_record['doctype'] = record_rows[0]['DocType']
+        normalized_record['grantors'] = list()
+        normalized_record['grantees'] = list()
+        # Records can conceivably span two images, which may span two reels...
+        normalized_record['reel_image'] = list()
+        # Some deeds cover multiple APNs
+        normalized_record['apn'] = list()
+
+        # Fetch the grantors and grantees
+        for row in record_rows:
+            names = row['Name'].split(MULTILINE_WORKAROUND_KEY)
+            if row.get('GrantorGrantee','') == 'E':
+                normalized_record['grantees'] += names
+            elif row.get('GrantorGrantee','') == 'R':
+                normalized_record['grantors'] += names
+        normalized_record['grantors'] = list(set(normalized_record['grantors']))
+        normalized_record['grantees'] = list(set(normalized_record['grantees']))
+
+        # Fetch the APNs.
+        apn_url = record_rows[0]['APNLink']
+        logging.info("Looking up APNs for %s via URL %s", joinkey, apn_url)
+        apn_list_html = apn_query_caller.fetch(apn_url)
+        apn_query_parser.feed(apn_list_html)
+        denorm_apn_records = apn_query_parser.get_records()
+        reel_image = list()
+        apns = list()
+        for apn_joinkey, apn_record_rows in denorm_apn_records.iteritems():
+            if apn_joinkey != joinkey:
+                logging.warning("APN fetching resulted in conflicting "
+                                "document IDs: %s vs %s", joinkey, apn_joinkey)
+
+            for apn_row in apn_record_rows:
+                reel = apn_row.get('Reel','')
+                image = apn_row.get('Image','')
+                if reel and image:
+                    normalized_record['reel_image'].append(reel + ',' + image)
+                normalized_record['apn'] += apn_row.get('APN','').split(
+                    MULTILINE_WORKAROUND_KEY)
+
+        normalized_record['reel_image'] = list(set(normalized_record['reel_image']))
+        normalized_record['apn'] = list(set(normalized_record['apn']))
+        normalized_records.append(normalized_record)
+    return normalized_records
+
+def parse_datequery_record_list(data):
+    parser.feed(data)
+    records = parser.get_records()
+    return records
 
 """ The system we're calling was built in the 90s, so it sometimes has
-issues. This exception indicates a recoverable failure from criis.com."""
+issues. This exception indicates a recoverable failure from criis.com. """
 class DSException(Exception):
        def __init__(self, value):
         Exception.__init__(self, value)
@@ -17,21 +102,38 @@ Note that the http_connection cannot be shared concurrently between two
 CRIISCallers.
 """
 class CRIISCaller(object):
-    def __init__(self, http_connection):
-        self.conn = http_connection
+
+    website = 'www.criis.com'
+
+    def __init__(self):
+        self.conn = None
+        self.create_connection()
         self.default_headers = {
             'Content-type': 'application/x-www-form-urlencoded', 
             'Accept':       'text/html',
             'User-Agent':   'sararcher@outlook.com'
         }
 
+    def __del__(self):
+        self.close_connection()
+
+    def create_connection(self):
+        self.close_connection()
+        self.conn = httplib.HTTPConnection(self.website, timeout=10)    
+        logging.info('Connection to %s opened.', self.website)
+
+    """ Call this when you're done with the object so we don't keep
+    unused open HTTP connections."""
+    def close_connection(self):
+        if (self.conn != None):
+            self.conn.close()
+        
     """ Returns string contents of the page. """
     def call_criis_with_redirection(self, url, params, headers=None):
         if not headers:
             headers = self.default_headers
-
         logging.info('Requesting %s %s %s', url, params, headers)
-        self.conn.request('POST', url, params, headers)
+        self.call_http_with_retries('POST', url, params, headers)
         response = self.conn.getresponse()
         logging.info("Received response to %s", url)
 
@@ -40,7 +142,7 @@ class CRIISCaller(object):
 
         redirect_url = response.getheader('Location')
         logging.info('Requesting %s', redirect_url)
-        self.conn.request('GET', redirect_url)
+        self.call_http_with_retries('GET', redirect_url)
         response = self.conn.getresponse()
         logging.info('Received response to %s', redirect_url)
 
@@ -48,10 +150,33 @@ class CRIISCaller(object):
             raise DSException('Post-redirect page fetching failed.') 
         return response.read()
 
+    def call_http_with_retries(self, req_type, url, params=None, headers=None):
+        if not params:
+            params = ""
+        if not headers:
+            headers = self.default_headers
+        additional_sleep_per_retry_ms = 3000
+        max_retries = 10
+        # Pour one out for the underprovisioned homies.
+        time.sleep(SLEEP_THROTTLE/1000.0)
+        for retry in range(0, max_retries):
+            try:
+                self.conn.request(req_type, url, params, headers)
+                return
+            except socket.timeout, e:
+                logging.error('Timeout #%d: %s', retry+1, str(e))
+                logging.info(traceback.format_exc())
+                sleep_sec = (retry + 1) * additional_sleep_per_retry_ms / 1000.0
+                logging.error("Retrying in %2.2f seconds")
+                time.sleep((retry + 1) * additional_sleep_per_retry_ms)
+                self.create_connection()
+        logging.error("Failed to call %s after %d attempts. Bailing.",
+                      url, max_retries)
+
 """ Issues a date-range query to CRIIS. """
 class CRIISCallerDateQuery(CRIISCaller):
-    def __init__(self, http_connection):
-        CRIISCaller.__init__(self, http_connection)
+    def __init__(self):
+        CRIISCaller.__init__(self)
 
     def fetch(self, date_start, date_end):
         params = urllib.urlencode({
@@ -70,20 +195,19 @@ class CRIISCallerDateQuery(CRIISCaller):
         return self.call_criis_with_redirection(
             "/cgi-bin/new_get_recorded.cgi", params)
 
+class CRIISCallerAPNQuery(CRIISCaller):
+    def __init__(self):
+        CRIISCaller.__init__(self)
 
-def parse_datequery_record_list(data):
-    data_trimmed = ""
-    # Broken tags and no data in the header, so we skip it.
-    for line in data.split("\n"):
-        if len(data_trimmed) == 0:
-            if "<body " not in line:
-                continue
-            data_trimmed += "<html>\n"
-        data_trimmed += line + "\n"
-    parser = HTMLRecordsDateQueryParser()
-    parser.feed(data_trimmed)
-    records = parser.get_records()
-    return records
+    def fetch(self, apn_url):
+        if "?" not in apn_url:
+            raise DSException("Malformed APN Url: %s", apn_url)
+        url, params = apn_url.split("?")
+        return self.call_criis_with_redirection(url, params)
+
+#
+# HTML Parsers
+#
 
 """ Base class of a parser of city records served via criis.com HTML pages. """
 class HTMLRecordsParser(HTMLParser):
@@ -96,6 +220,22 @@ class HTMLRecordsParser(HTMLParser):
         self.data = dict()
         self.records = dict()
         self.join_key = "Document"  # The column we join APNs and records on.
+        self.is_apn = False
+
+    """ Process criis.com page content. Call get_records() after this. """
+    def feed(self, pagecontent):
+        self.data = dict()
+        self.records = dict()
+        data_trimmed = ""
+        # The criis.com header tags have broken html and no data, so we drop
+        # everything before the body tag.
+        for line in pagecontent.split("\n"):
+            if len(data_trimmed) == 0:
+                if "<body " not in line:
+                    continue
+                data_trimmed += "<html>\n"
+            data_trimmed += line + "\n"
+        HTMLParser.feed(self, data_trimmed)
 
     @staticmethod
     def get_attribute(list, attribute):
@@ -129,20 +269,10 @@ class HTMLRecordsParser(HTMLParser):
     APNs). """
     def handle_data(self, celldata):
         if self.in_records_table and self.in_font:
-            print self.column, celldata
+            #print self.column, celldata
             # We process the last record when we return to column 0
             if self.column == 0:
-               if self.join_key in self.data.keys():
-                   for k in self.data.keys():
-                       # Sometimes there are multiple cells in a row/col
-                       # not sure of a better way to treat this
-                       self.data[k] = "\n".join(self.data[k])
-                   joinkeyvalue = self.data[self.join_key]
-                   if joinkeyvalue in self.records.keys():
-                       self.records[joinkeyvalue].append(self.data)
-                   else:
-                       self.records[joinkeyvalue] = [self.data]
-               self.data = dict()
+                self.flush_data_to_records()
             if self.column in self.column_to_field:
                 fieldname = self.column_to_field[self.column]
                 if fieldname in self.data.keys():
@@ -150,9 +280,30 @@ class HTMLRecordsParser(HTMLParser):
                 else:
                     self.data[fieldname] = [celldata]
 
+    def flush_data_to_records(self):
+        if not self.join_key in self.data.keys():
+            return
+
+        for k in self.data.keys():
+            # Sometimes there are multiple cells in a row/col
+            # not sure of a better way to treat this
+            self.data[k] = MULTILINE_WORKAROUND_KEY.join(
+                self.data[k])
+            joinkeyvalue = self.data[self.join_key]
+            if type(joinkeyvalue) == list:
+                joinkeyvalue = joinkeyvalue[0]
+            if joinkeyvalue in self.records.keys():
+                self.records[joinkeyvalue].append(self.data)
+            else:
+                self.records[joinkeyvalue] = [self.data]
+        self.data = dict()
+
     """ Provides records after page is parsed. """
     def get_records(self):
+        # Flush any remaining data.
+        self.flush_data_to_records()
         return self.records
+
 
 """ Parser for HTML pages listing date-queried records. """
 class HTMLRecordsDateQueryParser(HTMLRecordsParser):
@@ -165,7 +316,7 @@ class HTMLRecordsDateQueryParser(HTMLRecordsParser):
             5: 'GrantorGrantee',
             6: 'Name' }
 
-    """In addition to determining when we're in the table, we need to extract
+    """In addition to determining when we are in the table, we need to extract
     the APN link for date-queries records. """
     def handle_starttag(self, tag, attrs):
         HTMLRecordsParser.handle_starttag(self, tag, attrs)
@@ -178,11 +329,12 @@ class HTMLRecordsDateQueryParser(HTMLRecordsParser):
 class HTMLRecordsAPNParser(HTMLRecordsParser):
     def __init__(self):
         HTMLRecordsParser.__init__(self)
+        self.is_apn = True
         self.column_to_field = {
-            2: 'Document',
+            1: 'Document',
             3: 'Reel',
-            5: 'Image',
-            6: 'APN' }
+            4: 'Image',
+            9: 'APN' }
 
 def write_data(file_obj, block, lot, data, parties):
     writer = csv.writer(file_obj, quoting=csv.QUOTE_ALL)
