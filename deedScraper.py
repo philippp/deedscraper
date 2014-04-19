@@ -65,7 +65,21 @@ def main(argv):
     while idx < len(date_list):
         cur_date = date_list[idx]
         logging.info("Fetching records for %s", cur_date)
-        records = ds.fetch_records_for_daterange(cur_date, cur_date)
+        try:
+            records = ds.fetch_records_for_daterange(cur_date, cur_date)
+        except DSException:
+            # Criis.com repeatedly timing out or throwing errors results
+            # in a _BAD_READ file for that date, indicating that fetching failed.
+            # Empty files OTOH are due to no filings on that date (ex: Sunday,
+            # holidays).
+            tombstone = convert_mmddyyyy_to_output_filename(
+                output_path, cur_date) + "_BAD_READ"
+            f_out = open(tombstone, 'w')
+            f_out.write("FAILED TO READ")
+            f_out.close()
+            logging.error("Failed to fetch %s" % cur_date)
+            continue
+
         f_out = open(convert_mmddyyyy_to_output_filename(output_path, cur_date),
                      'w')
         f_out.write(json.dumps(records))

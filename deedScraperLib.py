@@ -20,7 +20,22 @@ def fetch_records_for_daterange(start_date, end_date):
     apn_query_caller = CRIISCallerAPNQuery()
     apn_query_parser = HTMLRecordsAPNParser()
 
-    html_daterecords = date_query_caller.fetch(start_date, end_date)
+    date_query_retries = 0
+    date_query_max_retries = 3
+    html_daterecords = None
+    while date_query_retries < date_query_max_retries:
+        try:
+            html_daterecords = date_query_caller.fetch(start_date, end_date)
+            break
+        except DSException:
+            logging.error("Caught a DSException fetching dates %s to %s " % (
+                    start_date, end_date))
+            date_query_caller.close_connection()
+            time.sleep(5)
+            date_query_caller.open_connection()
+    if html_daterecords == None:
+        raise DSException("Failed to fetch for date range %s to %s" % (
+                    start_date, end_date))
     date_query_parser.feed(html_daterecords)
     denorm_records = date_query_parser.get_records()
 
@@ -110,7 +125,8 @@ def parse_datequery_record_list(data):
 """ The system we're calling was built in the 90s, so it sometimes has
 issues. This exception indicates a recoverable failure from criis.com. """
 class DSException(Exception):
-       def __init__(self, value):
+    def __init__(self, value):
+        logging.error(value)
         Exception.__init__(self, value)
 
 """ Welcome to 1990. CRiis gets a POST request, calls a back-end
