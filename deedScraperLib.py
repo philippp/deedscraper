@@ -32,7 +32,7 @@ def fetch_records_for_daterange(start_date, end_date):
                     start_date, end_date))
             date_query_caller.close_connection()
             time.sleep(5)
-            date_query_caller.open_connection()
+            date_query_caller.create_connection()
     if html_daterecords == None:
         raise DSException("Failed to fetch for date range %s to %s" % (
                     start_date, end_date))
@@ -93,7 +93,7 @@ def fetch_records_for_daterange(start_date, end_date):
                         apn_url))
                 apn_query_caller.close_connection()
                 time.sleep(5)
-                apn_query_caller.open_connection()
+                apn_query_caller.create_connection()
 
         apn_query_parser.feed(apn_list_html)
         denorm_apn_records = apn_query_parser.get_records()
