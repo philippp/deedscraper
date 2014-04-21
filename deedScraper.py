@@ -86,7 +86,9 @@ def main(argv):
         f_out.close()
         idx += 1
     end = datetime.datetime.now()
-    timetaken = (end - start).total_seconds()
+    timetaken = (end - start).seconds()
+    logging.info("Processed %d dates in %d seconds." % (
+            date_list.length, timetaken))
 
 if __name__ == '__main__':
     main(sys.argv)
