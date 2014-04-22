@@ -33,18 +33,19 @@ class TestDeedScraperFunctions(unittest.TestCase):
 
 class TestHTMLRecordsDateQueryParser(unittest.TestCase):
     def test_get_attribute(self):
-        self.assertEqual(ds.HTMLRecordsParser.get_attribute(
+        self.assertEqual(dsl.HTMLRecordsParser.get_attribute(
                 [], 'r'), None)
-        self.assertEqual(ds.HTMLRecordsParser.get_attribute(
+        self.assertEqual(dsl.HTMLRecordsParser.get_attribute(
                 [('a', 'b'), ('c', 'd'), ('e', 'f')], 'c'), 'd')
 
     def test_parse_html(self):
-        f = open('./testdata/datequery_doc_type_list.html','r')
-        datequery_parser = dsl.HTMLRecordsDateQueryParser()
-        datequery_parser.feed(f.read())
-        records = datequery_parser.get_records()
-        self.assertEqual(
-            dsl.HTMLRecordsDateQueryParser.validate_records(records), True)
+        for c in ['1', '2']:
+            f = open('./testdata/datequery_doc_type_list' + c + '.html', 'r')
+            datequery_parser = dsl.HTMLRecordsDateQueryParser()
+            datequery_parser.feed(f.read())
+            records = datequery_parser.get_records()
+            self.assertEqual(
+                dsl.HTMLRecordsDateQueryParser.validate_records(records), True)
 
 if __name__ == '__main__':
     unittest.main()
