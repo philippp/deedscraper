@@ -117,11 +117,6 @@ def fetch_records_for_daterange(start_date, end_date):
         normalized_records.append(normalized_record)
     return normalized_records
 
-def parse_datequery_record_list(data):
-    parser.feed(data)
-    records = parser.get_records()
-    return records
-
 """ The system we're calling was built in the 90s, so it sometimes has
 issues. This exception indicates a recoverable failure from criis.com. """
 class DSException(Exception):
@@ -131,13 +126,12 @@ class DSException(Exception):
 
 """ Welcome to 1990. CRiis gets a POST request, calls a back-end
 called CyberQuery that writes the result into a world-browsable directory
-and then redirects you to the results file. I wish I were joking.
+and then redirects you to the results file.
 
 Note that the http_connection cannot be shared concurrently between two
 CRIISCallers.
 """
 class CRIISCaller(object):
-
     website = 'www.criis.com'
 
     def __init__(self):
@@ -263,13 +257,13 @@ class HTMLRecordsParser(HTMLParser):
     def __init__(self):
         HTMLParser.__init__(self)
         self.in_records_table = False
-        self.record = -1
         self.column = -1
         self.in_font = False
         self.data = dict()
         self.records = dict()
         self.join_key = "Document"  # The column we join APNs and records on.
         self.is_apn = False
+        self.column_to_field = dict()
 
     """ Process criis.com page content. Call get_records() after this. """
     def feed(self, pagecontent):
@@ -296,10 +290,8 @@ class HTMLRecordsParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag == 'table' and HTMLRecordsParser.get_attribute(attrs, 'class') == 'records': 
             self.in_records_table = True
-            self.record = -1
             self.column = -1
         elif tag == 'tr':
-            self.record +=1
             self.column = -1
         elif tag =='td':
             self.column += 1
@@ -309,6 +301,8 @@ class HTMLRecordsParser(HTMLParser):
     def handle_endtag(self, tag):
         if tag == 'table' and self.in_records_table:
             self.in_records_table = False
+        elif tag == 'tr' and self.in_records_table:
+            self.flush_data_to_records()
         elif tag == 'font':
             self.in_font = False
             
@@ -318,10 +312,6 @@ class HTMLRecordsParser(HTMLParser):
     APNs). """
     def handle_data(self, celldata):
         if self.in_records_table and self.in_font:
-            #print self.column, celldata
-            # We process the last record when we return to column 0
-            if self.column == 0:
-                self.flush_data_to_records()
             if self.column in self.column_to_field:
                 fieldname = self.column_to_field[self.column]
                 if fieldname in self.data.keys():
@@ -330,8 +320,11 @@ class HTMLRecordsParser(HTMLParser):
                     self.data[fieldname] = [celldata]
 
     def flush_data_to_records(self):
-        if not self.join_key in self.data.keys():
-            return
+        required_keys = self.column_to_field.values()
+        for k in required_keys:
+            if k not in self.data.keys():
+                self.data = dict()
+                return False;
 
         for k in self.data.keys():
             # Sometimes there are multiple cells in a row/col
@@ -346,6 +339,7 @@ class HTMLRecordsParser(HTMLParser):
             else:
                 self.records[joinkeyvalue] = [self.data]
         self.data = dict()
+        return True
 
     """ Provides records after page is parsed. """
     def get_records(self):
@@ -373,6 +367,48 @@ class HTMLRecordsDateQueryParser(HTMLRecordsParser):
             href = HTMLRecordsParser.get_attribute(attrs, 'href')
             if href is not None:
                 self.data['APNLink'] = [href]        
+
+    """Validate a DateQuery-generated record against common parsing issues."""
+    @staticmethod
+    def validate_records(records):
+        data_valid = True
+        for key, val in records.iteritems():
+            for v in val:                
+                if not v['Document'] == key:
+                    logging.error("Document ID %s did not match joinkey %s",
+                                  v['Document'], key)
+                    data_valid = False
+
+                # Check the Date
+                dateval = v.get('RecordDate')
+                if not dateval:
+                    logging.error("Record for %s had no date: %s",
+                                  key, str(v))
+                    data_valid = False
+                else:
+                    if len(dateval) != 10 or dateval[2] != "/" or \
+                            dateval[5] != "/":
+                        data_valid = False
+                        print len(dateval)
+                        print dateval[2]
+                        print dateval[5]
+                        logging.error("Corrupted date in record %s: %s",
+                                  key, dateval)
+                # Check the DocType
+                if v['DocType'] != "DEED":
+                    data_valid = False
+                    logging.error("Corrupted DocType in record %s: %s",
+                                  key, v['DocType'])
+                
+                if ' ' in v['APNLink']:
+                    data_valid = False
+                    logging.error("Invalid APNLink: %s", v['APNLink'])
+
+                if v['GrantorGrantee'] not in ('E', 'R'):
+                    data_valid = False
+                    logging.error("Expected GrantorGrantee to be E or R.")
+
+        return data_valid
 
 """ Parser for HTML pages listing APNs of records. """
 class HTMLRecordsAPNParser(HTMLRecordsParser):

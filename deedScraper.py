@@ -48,12 +48,12 @@ def expand_dates_to_MMDDYYYY_list(start_date_str, end_date_str):
         cur_date += datetime.timedelta(days=1)
     return mmddyyyy_list
 
-def convert_mmddyyyy_to_output_filename(output_path, mmddyyyy_str):
+def convert_mmddyyyy_to_output_filename(output_path, prefix, mmddyyyy_str):
     year_str = mmddyyyy_str[4:8]
     day_str = mmddyyyy_str[2:4]
     month_str = mmddyyyy_str[0:2]
-    return output_path + ("/records_%s%s%s.json" % (
-            year_str, month_str, day_str))
+    return output_path + ("/%s_%s%s%s.json" % (
+            prefix, year_str, month_str, day_str))
 
 def main(argv):
     logging.basicConfig(level=logging.INFO)
@@ -64,24 +64,25 @@ def main(argv):
     idx = 0
     while idx < len(date_list):
         cur_date = date_list[idx]
+        record_type_name = "records"  # TODO: Change this to the actual record type.
         logging.info("Fetching records for %s", cur_date)
         try:
             records = ds.fetch_records_for_daterange(cur_date, cur_date)
-        except DSException:
+        except ds.DSException:
             # Criis.com repeatedly timing out or throwing errors results
             # in a _BAD_READ file for that date, indicating that fetching failed.
             # Empty files OTOH are due to no filings on that date (ex: Sunday,
             # holidays).
             tombstone = convert_mmddyyyy_to_output_filename(
-                output_path, cur_date) + "_BAD_READ"
+                output_path, record_type_name, cur_date) + "_BAD_READ"
             f_out = open(tombstone, 'w')
             f_out.write("FAILED TO READ")
             f_out.close()
             logging.error("Failed to fetch %s" % cur_date)
             continue
 
-        f_out = open(convert_mmddyyyy_to_output_filename(output_path, cur_date),
-                     'w')
+        f_out = open(convert_mmddyyyy_to_output_filename(
+                output_path, record_type_name, cur_date), 'w')
         f_out.write(json.dumps(records))
         f_out.close()
         idx += 1

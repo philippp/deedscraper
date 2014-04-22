@@ -3,63 +3,48 @@
 import csv
 import os
 import unittest
-import deedScraperLib as ds
+import pprint
+import logging
+import deedScraper as ds
+import deedScraperLib as dsl
 
 
 class TestDeedScraperFunctions(unittest.TestCase):
-    
-    data_1 = {'Image': '0151', 'Year': '2008', 'DocumentType': 'DEED', 'RecordDate': '06/25/2008', 'Document': 'I603689-00', 'Reel': 'J670'}
-    parties_1 = [('R', 'CUTLER ELEANOR D'), ('R', 'CUTLER ROBERT N'), ('E', 'CUTLER ELEANOR D'), ('E', 'CUTLER ROBERT N')]
+    def test_expand_dates_to_MMDDYYYY_list_singledate(self):
+        single_dates_range = ("20130102", "20130102")
+        reversed_dates_list = ds.expand_dates_to_MMDDYYYY_list(
+            *single_dates_range)
+        self.assertEqual(len(reversed_dates_list), 1)
+        self.assertEqual(reversed_dates_list[0], "01022013")
 
-    data_2 = {'Image': '0110', 'Year': '2002', 'DocumentType': 'DEED', 'RecordDate': '05/21/2002', 'Document': 'H170082-00', 'Reel': 'I142'}
-    parties_2 = [('R', 'KIM NANCY'), ('E', 'FOSTER TAMMY')]
+    def test_expand_dates_to_MMDDYYYY_list_daterange(self):
+        single_dates_range = ("20121231", "20130102")
+        reversed_dates_list = ds.expand_dates_to_MMDDYYYY_list(
+            *single_dates_range)
+        self.assertEqual(len(reversed_dates_list), 3)
+        self.assertEqual(reversed_dates_list[0], "12312012")
+        self.assertEqual(reversed_dates_list[1], "01012013")
+        self.assertEqual(reversed_dates_list[2], "01022013")
 
+    def test_convert_mmddyyyy_to_output_filename(self):
+        filename = ds.convert_mmddyyyy_to_output_filename(
+            "outpath", "prefix", "01022013")
+        self.assertEqual(filename, "outpath/prefix_20130102.json")
+
+class TestHTMLRecordsDateQueryParser(unittest.TestCase):
     def test_get_attribute(self):
-        self.assertEqual(ds.get_attribute([], 'r'), None)
-        self.assertEqual(ds.get_attribute([('a', 'b'), ('c', 'd'), ('e', 'f')], 'c'), 'd')
+        self.assertEqual(ds.HTMLRecordsParser.get_attribute(
+                [], 'r'), None)
+        self.assertEqual(ds.HTMLRecordsParser.get_attribute(
+                [('a', 'b'), ('c', 'd'), ('e', 'f')], 'c'), 'd')
 
-    def test_parse_deed_list(self):
-        with open('./testdata/test_deed_list_data', 'r') as f:
-            urls = ds.parse_deed_list(f.read())
-        
-        self.assertEqual(urls, ['/cgi-bin/new_get_recorded.cgi?l_doc_ref_no=4624495&COUNTY=sanfrancisco&YEARSEGMENT=current&SEARCH_TYPE=DETAIL_N'])
-
-    def test_parse_deed(self):
-
-        items = [ (TestDeedScraperFunctions.data_1, TestDeedScraperFunctions.parties_1,'./testdata/test_deed_data_1'), 
-            (TestDeedScraperFunctions.data_2, TestDeedScraperFunctions.parties_2, './testdata/test_deed_data_2')]
-
-        for item in items:            
-            exp_data, exp_parties, filename = item
-
-            with open(filename, 'r') as f:
-                data, parties = ds.parse_deed(f.read())
-
-            self.assertEqual(data, exp_data)
-            self.assertEqual(parties, exp_parties)
-
-    def test_write_data(self):
-        expected = [
-            [ "2133A","002B","2008","I603689-00","06/25/2008","J670","0151","DEED","R","CUTLER ELEANOR D"   ],
-            [ "2133A","002B","2008","I603689-00","06/25/2008","J670","0151","DEED","R","CUTLER ROBERT N"    ],
-            [ "2133A","002B","2008","I603689-00","06/25/2008","J670","0151","DEED","E","CUTLER ELEANOR D"   ],
-            [ "2133A","002B","2008","I603689-00","06/25/2008","J670","0151","DEED","E","CUTLER ROBERT N"    ]
-        ]
-        if os.path.isfile('./test_write_data.34324.out'):
-            raise Exception('./test_write_data.34324.out file exists')
-
-        with open('./test_write_data.34324.out', 'w', 0) as f:
-            ds.write_data(f, '2133A', '002B', TestDeedScraperFunctions.data_1, TestDeedScraperFunctions.parties_1)  
-        
-        with open('./test_write_data.34324.out', 'r') as f:
-            csv_reader = csv.reader(f)
-            index = 0
-            for row in csv_reader:
-                self.assertEqual(row, expected[index])
-                index += 1
-       
-        os.remove('./test_write_data.34324.out')      
-
+    def test_parse_html(self):
+        f = open('./testdata/datequery_doc_type_list.html','r')
+        datequery_parser = dsl.HTMLRecordsDateQueryParser()
+        datequery_parser.feed(f.read())
+        records = datequery_parser.get_records()
+        self.assertEqual(
+            dsl.HTMLRecordsDateQueryParser.validate_records(records), True)
 
 if __name__ == '__main__':
     unittest.main()
