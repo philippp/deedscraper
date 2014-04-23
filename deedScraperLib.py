@@ -1,5 +1,5 @@
 import httplib, urllib
-import csv
+import re
 from HTMLParser import HTMLParser
 import logging
 import pprint
@@ -368,7 +368,7 @@ class HTMLRecordsDateQueryParser(HTMLRecordsParser):
             if href is not None:
                 self.data['APNLink'] = [href]        
 
-    """Validate a DateQuery-generated record against common parsing issues."""
+    """Validate a DateQuery-generated records against common parsing issues."""
     @staticmethod
     def validate_records(records):
         data_valid = True
@@ -382,16 +382,11 @@ class HTMLRecordsDateQueryParser(HTMLRecordsParser):
                 # Check the Date
                 dateval = v.get('RecordDate')
                 if not dateval:
+                    data_valid = False
                     logging.error("Record for %s had no date: %s",
                                   key, str(v))
-                    data_valid = False
-                else:
-                    if len(dateval) != 10 or dateval[2] != "/" or \
-                            dateval[5] != "/":
+                elif not re.match("\d{2}\/\d{2}\/\d{4}", v['RecordDate']):
                         data_valid = False
-                        print len(dateval)
-                        print dateval[2]
-                        print dateval[5]
                         logging.error("Corrupted date in record %s: %s",
                                   key, dateval)
                 # Check the DocType
@@ -415,21 +410,79 @@ class HTMLRecordsAPNParser(HTMLRecordsParser):
     def __init__(self):
         HTMLRecordsParser.__init__(self)
         self.is_apn = True
+        # APN Pages are malformed when the images and reels are not populated.
+        # When that's the case, we need to sort out what's what manually.
+        self.all_data_for_sniffing = []
         self.column_to_field = {
             1: 'Document',
             3: 'Reel',
             4: 'Image',
             9: 'APN' }
 
-def write_data(file_obj, block, lot, data, parties):
-    writer = csv.writer(file_obj, quoting=csv.QUOTE_ALL)
+    """Validate a APN query generated records against common parsing issues."""
+    def validate_records(self, records):
+        data_valid = True
+        if len(records.keys()) == 0:
+            logging.error("No records found")
+            data_valid = False
+        for key, records in records.iteritems():
+            for record in records:
+                for colname in self.column_to_field.values():
+                    if colname not in record.keys():
+                        logging.error("Found record without %s entry: %s",
+                                      colname, str(record))
+                        data_valid = False
+                if not re.match("\d+\-\d+", record['APN']):
+                    logging.error("Invalid APN (block and lot) for %s: %s",
+                                  key, record['APN'])
+        return data_valid
 
-    for party in parties:
-        writer.writerow([block, lot, data['Year'], data['Document'], data['RecordDate'],
-                data['Reel'], data['Image'], data['DocumentType'], party[0], party[1]])
+    def handle_data(self, celldata):
+        if self.in_records_table and celldata:
+            self.all_data_for_sniffing.append(celldata)
+        HTMLRecordsParser.handle_data(self, celldata)
 
-    file_obj.flush
+    def flush_data_to_records(self):
+        # Sometimes we don't get Reel/Image entries here, and the
+        # cells are missing font tags. If that's the case, we need to sniff
+        # out the data.
+        required_keys = self.column_to_field.values()
+        sniffing_needed = False
+        for k in required_keys:
+            if k not in self.data.keys():
+                sniffing_needed = True
 
+        if sniffing_needed:
+            # Some new records don't have Image and Reel yet, and the respective
+            # cells miss the font tags and the table has extra cells (WTF?!?)
+            # which breaks our nice column mapping.
+            newdata = {'Image':[], 'Reel':[]}
 
+            # The year looks JUST like an image number, so we first find the
+            # date, extract its year and toss the YYYY year out.
+            year = ""
+            for d in self.all_data_for_sniffing:
+                result = re.search("\d{2}\/\d{2}\/(\d{4})", d)
+                if result:
+                    year = result.group(1)
+            if year:
+                self.all_data_for_sniffing.remove(year)
 
+            # Order here is crucial: Most restrictive to most permissive.
+            keys_regexps = (
+                ("APN", "\d+\-\d+"),
+                ("Document", "\w{1,2}\d+\-\d{2}"),
+                ("Reel", "[A-Z]\d{2,4}"),
+                ("Image", "\d{4}"))
 
+            for value in self.all_data_for_sniffing:
+                for k, r in keys_regexps:
+                    if re.match(r, value):
+                        if k in newdata.keys():
+                            newdata[k].append(value)
+                        else:
+                            newdata[k] = [value]
+                        break
+            self.data = newdata
+        self.all_data_for_sniffing = list()
+        HTMLRecordsParser.flush_data_to_records(self)

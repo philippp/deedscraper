@@ -47,6 +47,16 @@ class TestHTMLRecordsDateQueryParser(unittest.TestCase):
             self.assertEqual(
                 dsl.HTMLRecordsDateQueryParser.validate_records(records), True)
 
+class TestHTMLRecordsAPNParser(unittest.TestCase):
+    def test_parse_html(self):
+        for c in ['1', '2']:
+            f = open('./testdata/apnquery_doc_detail' + c + '.html', 'r')
+            apn_parser = dsl.HTMLRecordsAPNParser()
+            apn_parser.feed(f.read())
+            records = apn_parser.get_records()
+            self.assertEqual(
+                apn_parser.validate_records(records), True)
+            
 if __name__ == '__main__':
     unittest.main()
 
