@@ -13,7 +13,7 @@ MULTILINE_WORKAROUND_KEY = "|||"
 """ Fetch records for date range, including owner and APN information.
 Returns a date-sorted list of normalized records.
 """
-def fetch_records_for_daterange(start_date, end_date):
+def fetch_records_for_daterange(start_date, end_date, record_type_num):
     date_query_caller = CRIISCallerDateQuery()
     date_query_parser = HTMLRecordsDateQueryParser()
 
@@ -25,7 +25,8 @@ def fetch_records_for_daterange(start_date, end_date):
     html_daterecords = None
     while date_query_retries < date_query_max_retries:
         try:
-            html_daterecords = date_query_caller.fetch(start_date, end_date)
+            html_daterecords = date_query_caller.fetch(
+                start_date, end_date, record_type_num)
             break
         except DSException:
             logging.error("Caught a DSException fetching dates %s to %s " % (
@@ -124,6 +125,12 @@ class DSException(Exception):
         logging.error(value)
         Exception.__init__(self, value)
 
+CRIIS_RECORD_TYPES = {
+    "DEED" : "001",
+    "DEED_OF_TRUST" : "002",
+    "DEED_OF_TRUST_WITH_RENTS" : "003",
+}
+
 """ Welcome to 1990. CRiis gets a POST request, calls a back-end
 called CyberQuery that writes the result into a world-browsable directory
 and then redirects you to the results file.
@@ -186,7 +193,7 @@ class CRIISCaller(object):
                 logging.error('Timeout #%d: %s', retry+1, str(e))
                 logging.info(traceback.format_exc())
                 sleep_sec = sleep_per_retry_ms / 1000.0
-                logging.error("Retrying in %2.2f seconds" % sleep_sec)
+                logging.error("Retrying in %f seconds", sleep_sec)
                 time.sleep(sleep_sec)
 
         raise DSException(
@@ -221,9 +228,9 @@ class CRIISCallerDateQuery(CRIISCaller):
     def __init__(self):
         CRIISCaller.__init__(self)
 
-    def fetch(self, date_start, date_end):
+    def fetch(self, date_start, date_end, doc_type="001"):
         params = urllib.urlencode({
-                'DOC_TYPE': '001',
+                'DOC_TYPE': doc_type,
                 'doc_dateA': date_start,
                 'doc_dateB': date_end,
                 'SEARCH_TYPE': 'DOCTYPE',

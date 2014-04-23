@@ -8,7 +8,6 @@ import logging
 import deedScraper as ds
 import deedScraperLib as dsl
 
-
 class TestDeedScraperFunctions(unittest.TestCase):
     def test_expand_dates_to_MMDDYYYY_list_singledate(self):
         single_dates_range = ("20130102", "20130102")
