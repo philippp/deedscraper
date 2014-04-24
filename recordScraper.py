@@ -3,16 +3,16 @@ import csv
 from datetime import datetime 
 import pprint
 import sys
-import deedScraperLib as ds
+import recordScraperLib as ds
 import logging
 import datetime
 import json
 
 def usage():
     print
-    print 'Usage: ./deedScraper YYYYMMDD:YYYYMMDD RECORDTYPE data_path'
+    print 'Usage: ./recordScraper YYYYMMDD:YYYYMMDD RECORDTYPE data_path'
     print
-    print """Fetches deeds between the two specified dates and writes output files containing details of the deeds into the directory specified by data_path. Output files are JSON-encoded deed data and are chunked per day."""
+    print """Fetches records between the two specified dates and writes output files containing details of the records into the directory specified by data_path. Output files are JSON-encoded deed data and are chunked per day."""
     sys.exit(2)
 
 def parse_commandline_arguments(argv):
@@ -23,9 +23,9 @@ def parse_commandline_arguments(argv):
         if len(argv[1]) != 17 or argv[1][8] != ':':
             raise Exception("Incorrect date format:", arvg[1])
 
-        if not ds.CRIIS_RECORD_TYPES.get(argv[2]):
+        if not rs.CRIIS_RECORD_TYPES.get(argv[2]):
             print "Invalid record type, valid types are:"
-            pprint.pprint(ds.CRIIS_RECORD_TYPES.keys())
+            pprint.pprint(rs.CRIIS_RECORD_TYPES.keys())
             raise Exception()
     except Exception, e:
         print str(e)
@@ -63,7 +63,7 @@ def main(argv):
     logging.basicConfig(level=logging.INFO)
     (date_start, date_end, record_type_name, output_path) = \
         parse_commandline_arguments(argv)
-    record_type_num = ds.CRIIS_RECORD_TYPES[record_type_name]
+    record_type_num = rs.CRIIS_RECORD_TYPES[record_type_name]
     date_list = expand_dates_to_MMDDYYYY_list(date_start, date_end)
     logging.info("Attempting to fetch for dates: %s", ",".join(date_list))
     start = datetime.datetime.now()
@@ -72,9 +72,9 @@ def main(argv):
         cur_date = date_list[idx]
         logging.info("Fetching records for %s", cur_date)
         try:
-            records = ds.fetch_records_for_daterange(
+            records = rs.fetch_records_for_daterange(
                 cur_date, cur_date, record_type_num)
-        except ds.DSException:
+        except rs.DSException:
             # Criis.com repeatedly timing out or throwing errors results
             # in a _BAD_READ file for that date, indicating that fetching failed.
             # Empty files OTOH are due to no filings on that date (ex: Sunday,
