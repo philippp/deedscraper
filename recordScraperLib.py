@@ -439,7 +439,7 @@ class HTMLRecordsAPNParser(HTMLRecordsParser):
                         logging.error("Found record without %s entry: %s",
                                       colname, str(record))
                         data_valid = False
-                if not re.match("\d+\-\d+", record['APN']):
+                if not re.match("[\d\w]+\-\d+", record['APN']):
                     logging.error("Invalid APN (block and lot) for %s: %s",
                                   key, record['APN'])
         return data_valid
@@ -477,8 +477,8 @@ class HTMLRecordsAPNParser(HTMLRecordsParser):
 
             # Order here is crucial: Most restrictive to most permissive.
             keys_regexps = (
+                ("Document", "[A-Z]\d+\-\d{2}"),
                 ("APN", "[\d\w]+\-\d+"),
-                ("Document", "\w{1,2}\d+\-\d{2}"),
                 ("Reel", "[A-Z]\d{2,4}"),
                 ("Image", "\d{4}"))
 
