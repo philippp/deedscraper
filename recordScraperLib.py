@@ -477,7 +477,7 @@ class HTMLRecordsAPNParser(HTMLRecordsParser):
 
             # Order here is crucial: Most restrictive to most permissive.
             keys_regexps = (
-                ("APN", "\d+\-\d+"),
+                ("APN", "[\d\w]+\-\d+"),
                 ("Document", "\w{1,2}\d+\-\d{2}"),
                 ("Reel", "[A-Z]\d{2,4}"),
                 ("Image", "\d{4}"))

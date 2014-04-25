@@ -3,7 +3,7 @@ import csv
 from datetime import datetime 
 import pprint
 import sys
-import recordScraperLib as ds
+import recordScraperLib as rs
 import logging
 import datetime
 import json
