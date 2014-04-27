@@ -38,7 +38,7 @@ class TestHTMLRecordsDateQueryParser(unittest.TestCase):
                 [('a', 'b'), ('c', 'd'), ('e', 'f')], 'c'), 'd')
 
     def test_parse_html(self):
-        for c in ['1', '2']:
+        for c in ['1', '2', '3']:
             f = open('./testdata/datequery_doc_type_list' + c + '.html', 'r')
             datequery_parser = rsl.HTMLRecordsDateQueryParser()
             datequery_parser.feed(f.read())
@@ -48,7 +48,7 @@ class TestHTMLRecordsDateQueryParser(unittest.TestCase):
 
 class TestHTMLRecordsAPNParser(unittest.TestCase):
     def test_parse_html(self):
-        for c in ['1', '2']:
+        for c in ['1', '2', '3']:
             f = open('./testdata/apnquery_doc_detail' + c + '.html', 'r')
             apn_parser = rsl.HTMLRecordsAPNParser()
             apn_parser.feed(f.read())

@@ -82,7 +82,8 @@ def fetch_records_for_daterange(start_date, end_date, record_type_num):
 
         # Fetch the APNs.
         apn_url = record_rows[0]['APNLink']
-        logging.info("Looking up APNs for %s via URL %s", joinkey, apn_url)
+        logging.info("Looking up APNs for %s (%s)", joinkey,
+                     normalized_record['date'])
         apn_fetch_retries = 0
         apn_fetch_max_retries = 3
         while apn_fetch_retries < apn_fetch_max_retries:
@@ -125,7 +126,7 @@ class DSException(Exception):
         logging.error(value)
         Exception.__init__(self, value)
 
-CRIIS_RECORD_TYPES = {
+RECORD_TYPES = {
     "DEED" : "001",
     "DEED_OF_TRUST" : "002",
     "DEED_OF_TRUST_WITH_RENTS" : "003",
@@ -169,7 +170,6 @@ class CRIISCaller(object):
     def call_criis_with_redirection(self, url, params, headers=None):
         if not headers:
             headers = self.default_headers
-        logging.info('Requesting %s %s %s', url, params, headers)
         self.call_http_with_retries('POST', url, params, headers)
         response = self.get_response_with_retries()
         if response.status != 302:
@@ -397,7 +397,7 @@ class HTMLRecordsDateQueryParser(HTMLRecordsParser):
                         logging.error("Corrupted date in record %s: %s",
                                   key, dateval)
                 # Check the DocType
-                if v['DocType'] != "DEED":
+                if v['DocType'].replace(" ", "_") not in RECORD_TYPES.keys():
                     data_valid = False
                     logging.error("Corrupted DocType in record %s: %s",
                                   key, v['DocType'])

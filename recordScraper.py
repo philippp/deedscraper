@@ -23,9 +23,9 @@ def parse_commandline_arguments(argv):
         if len(argv[1]) != 17 or argv[1][8] != ':':
             raise Exception("Incorrect date format:", arvg[1])
 
-        if not rs.CRIIS_RECORD_TYPES.get(argv[2]):
+        if not rs.RECORD_TYPES.get(argv[2]):
             print "Invalid record type, valid types are:"
-            pprint.pprint(rs.CRIIS_RECORD_TYPES.keys())
+            pprint.pprint(rs.RECORD_TYPES.keys())
             raise Exception()
     except Exception, e:
         print str(e)
@@ -63,7 +63,7 @@ def main(argv):
     logging.basicConfig(level=logging.INFO)
     (date_start, date_end, record_type_name, output_path) = \
         parse_commandline_arguments(argv)
-    record_type_num = rs.CRIIS_RECORD_TYPES[record_type_name]
+    record_type_num = rs.RECORD_TYPES[record_type_name]
     date_list = expand_dates_to_MMDDYYYY_list(date_start, date_end)
     logging.info("Attempting to fetch for dates: %s", ",".join(date_list))
     start = datetime.datetime.now()
